@@ -1,1 +1,5 @@
-
+flask
+flask-cors
+yt-dlp
+google-generativeai
+gunicorn
