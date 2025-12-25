@@ -17,17 +17,21 @@ def download_video(video_url):
     timestamp = int(time.time())
     output_template = f"video_{timestamp}.%(ext)s"
     
-    # STEALTH MODE CONFIGURATION
+    # SPEED OPTIMIZATION: Force lowest quality and strict timeouts
     ydl_opts = {
-        'format': 'worst[ext=mp4]/worst', # Smallest MP4 file (fastest for AI to "watch")
+        'format': 'worst', # Absolute smallest file (144p/240p) - FASTEST
         'outtmpl': output_template,
         'noplaylist': True,
-        'max_filesize': 50 * 1024 * 1024, # 50MB Limit
+        'max_filesize': 50 * 1024 * 1024,
         
-        # ANTI-BLOCKING MEASURES
+        # TIMEOUTS (Fail fast if YouTube is slow)
+        'socket_timeout': 10,
+        'quiet': True,
+        
+        # ANTI-BLOCKING
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'source_address': '0.0.0.0', # Force IPv4
+        'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.63 Safari/537.36',
     }
 
@@ -50,11 +54,9 @@ def analyze_with_gemini(video_path):
         print(f"Uploading {video_path} to Gemini...")
         video_file = genai.upload_file(path=video_path)
         
-        # Wait for processing (Gemini needs to 'watch' it)
-        # We limit waiting to 20 seconds to prevent timeouts
+        # Wait for processing
         attempts = 0
         while video_file.state.name == "PROCESSING" and attempts < 10:
-            print("Processing video...")
             time.sleep(2)
             video_file = genai.get_file(video_file.name)
             attempts += 1
@@ -62,26 +64,22 @@ def analyze_with_gemini(video_path):
         if video_file.state.name == "FAILED":
             return "Error: Gemini failed to process the video file."
 
-        # THE PROMPT: This ensures we get AUDIO and VISUAL analysis
+        # THE PROMPT
         model = genai.GenerativeModel(model_name="gemini-1.5-flash")
         prompt = (
-            "You are a multimodal AI assistant. Analyze this video deeply.\n"
-            "1. VISUALS: Describe the setting, lighting, objects, and actions you see.\n"
-            "2. AUDIO: Describe the music genre/mood, sound effects, and voice tone.\n"
-            "3. SUMMARY: What is the core message?"
+            "Analyze this video quickly.\n"
+            "1. VISUALS: Brief description of setting and action.\n"
+            "2. AUDIO: Mood of music or sound.\n"
+            "3. SUMMARY: 1-sentence summary."
         )
 
         response = model.generate_content([video_file, prompt])
-        
-        # Clean up cloud file
         genai.delete_file(video_file.name)
-        
         return response.text
 
     except Exception as e:
         return f"AI Analysis Error: {str(e)}"
     finally:
-        # Clean up local file
         if os.path.exists(video_path):
             os.remove(video_path)
 
@@ -99,10 +97,11 @@ def analyze_video():
 
     print(f"Stealth request for: {video_url}")
 
-    # Step 1: Download (Stealth Mode)
+    # Step 1: Download
     video_path = download_video(video_url)
     if not video_path:
-        return jsonify({"error": "Download failed. YouTube blocked the server request."}), 500
+        # Return specific error so client can fallback to Tavily
+        return jsonify({"error": "Download failed (Server Blocked or Timeout)"}), 500
 
     # Step 2: Analyze
     analysis = analyze_with_gemini(video_path)
