@@ -17,24 +17,14 @@ def download_video(video_url):
     timestamp = int(time.time())
     output_template = f"video_{timestamp}.%(ext)s"
     
-    # SPEED OPTIMIZATION: Force lowest quality and strict timeouts
     ydl_opts = {
-        'format': 'worst', # Absolute smallest file (144p/240p) - FASTEST
+        'format': 'worst', 
         'outtmpl': output_template,
         'noplaylist': True,
         'max_filesize': 50 * 1024 * 1024,
-        
-        # TIMEOUTS (Fail fast if YouTube is slow)
         'socket_timeout': 10,
         'quiet': True,
-        
-        # ANTI-BLOCKING: THE ANDROID DISGUISE
-        # We tell YouTube we are an Android phone, which they block less often.
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web']
-            }
-        },
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
@@ -44,10 +34,8 @@ def download_video(video_url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
         
-        # Find the file we just downloaded
         list_of_files = glob.glob(f"video_{timestamp}.*")
-        if not list_of_files:
-            return None
+        if not list_of_files: return None
         return list_of_files[0]
     except Exception as e:
         print(f"Download error: {e}")
@@ -61,7 +49,7 @@ def analyze_with_gemini(video_path):
         
         # Wait for processing
         attempts = 0
-        while video_file.state.name == "PROCESSING" and attempts < 10:
+        while video_file.state.name == "PROCESSING" and attempts < 20:
             time.sleep(2)
             video_file = genai.get_file(video_file.name)
             attempts += 1
@@ -69,8 +57,14 @@ def analyze_with_gemini(video_path):
         if video_file.state.name == "FAILED":
             return "Error: Gemini failed to process the video file."
 
-        # THE PROMPT - Updated to handle generic media (Audio or Video)
-        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+        # THE PROMPT
+        # We try the specific version "gemini-1.5-flash-001" which is more stable
+        try:
+            model = genai.GenerativeModel(model_name="gemini-1.5-flash-001")
+        except:
+            # Fallback if the specific version is not found
+            model = genai.GenerativeModel(model_name="gemini-1.5-pro")
+
         prompt = (
             "Analyze this media file (video or audio) quickly.\n"
             "1. VISUALS (if present): Brief description of setting and action.\n"
@@ -89,52 +83,32 @@ def analyze_with_gemini(video_path):
             os.remove(video_path)
 
 @app.route('/', methods=['GET'])
-def health_check():
-    return "Stealth Vision Server Running!", 200
+def health_check(): return "Stealth Vision Server Running!", 200
 
-# ROUTE 1: URL ANALYSIS (YouTube/Vimeo)
+# ROUTE 1: URL ANALYSIS
 @app.route('/analyze', methods=['POST'])
 def analyze_video():
     data = request.json
     video_url = data.get('url')
+    if not video_url: return jsonify({"error": "No URL provided"}), 400
 
-    if not video_url:
-        return jsonify({"error": "No URL provided"}), 400
-
-    print(f"Stealth request for: {video_url}")
-
-    # Step 1: Download
     video_path = download_video(video_url)
-    if not video_path:
-        # Return specific error so client can fallback to Tavily
-        return jsonify({"error": "Download failed (Server Blocked or Timeout)"}), 500
+    if not video_path: return jsonify({"error": "Download failed (Server Blocked or Timeout)"}), 500
 
-    # Step 2: Analyze
     analysis = analyze_with_gemini(video_path)
-    
-    return jsonify({
-        "status": "success",
-        "analysis": analysis
-    })
+    return jsonify({"status": "success", "analysis": analysis})
 
-# ROUTE 2: DIRECT UPLOAD (Manual File Upload)
+# ROUTE 2: DIRECT UPLOAD
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part in request"}), 400
-        
+    if 'file' not in request.files: return jsonify({"error": "No file part"}), 400
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+    if file.filename == '': return jsonify({"error": "No selected file"}), 400
         
     if file:
-        # Save file locally first
         timestamp = int(time.time())
-        # Keep original extension so Gemini knows if it's .mp3, .mp4, etc.
         filename = f"upload_{timestamp}_{file.filename}"
         file.save(filename)
-        
-        # Analyze
         analysis = analyze_with_gemini(filename)
         return jsonify({"status": "success", "analysis": analysis})
 
