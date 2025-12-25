@@ -69,12 +69,12 @@ def analyze_with_gemini(video_path):
         if video_file.state.name == "FAILED":
             return "Error: Gemini failed to process the video file."
 
-        # THE PROMPT
+        # THE PROMPT - Updated to handle generic media (Audio or Video)
         model = genai.GenerativeModel(model_name="gemini-1.5-flash")
         prompt = (
-            "Analyze this video quickly.\n"
-            "1. VISUALS: Brief description of setting and action.\n"
-            "2. AUDIO: Mood of music or sound.\n"
+            "Analyze this media file (video or audio) quickly.\n"
+            "1. VISUALS (if present): Brief description of setting and action.\n"
+            "2. AUDIO: Mood of music, speech tone, or sound effects.\n"
             "3. SUMMARY: 1-sentence summary."
         )
 
@@ -92,6 +92,7 @@ def analyze_with_gemini(video_path):
 def health_check():
     return "Stealth Vision Server Running!", 200
 
+# ROUTE 1: URL ANALYSIS (YouTube/Vimeo)
 @app.route('/analyze', methods=['POST'])
 def analyze_video():
     data = request.json
@@ -115,6 +116,27 @@ def analyze_video():
         "status": "success",
         "analysis": analysis
     })
+
+# ROUTE 2: DIRECT UPLOAD (Manual File Upload)
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in request"}), 400
+        
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+        
+    if file:
+        # Save file locally first
+        timestamp = int(time.time())
+        # Keep original extension so Gemini knows if it's .mp3, .mp4, etc.
+        filename = f"upload_{timestamp}_{file.filename}"
+        file.save(filename)
+        
+        # Analyze
+        analysis = analyze_with_gemini(filename)
+        return jsonify({"status": "success", "analysis": analysis})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
